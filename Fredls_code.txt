@@ -1,0 +1,117 @@
+import face_recognition
+import cv2
+import numpy as np
+import os
+import serial
+import imghdr
+from email.message import EmailMessage
+import smtplib
+
+serial_connection = serial.Serial('COM1', 9600)
+
+current_directory = os.getcwd()
+abdul_kalam_img_path = current_directory + '\\abdul_kalam.jpg'
+ganesh_img_path = current_directory + '\\ganesh.jpg'
+bhargav_img_path = current_directory + '\\bhargav.jpg'
+nani_img_path = current_directory + '\\nani.jpg'
+
+video_capture_device = cv2.VideoCapture(0)
+
+abdul_kalam_image = face_recognition.load_image_file(abdul_kalam_img_path)
+abdul_kalam_encoding = face_recognition.face_encodings(abdul_kalam_image)[0]
+
+ganesh_image = face_recognition.load_image_file(ganesh_img_path)
+ganesh_encoding = face_recognition.face_encodings(ganesh_image)[0]
+
+bhargav_image = face_recognition.load_image_file(bhargav_img_path)
+bhargav_encoding = face_recognition.face_encodings(bhargav_image)[0]
+
+nani_image = face_recognition.load_image_file(nani_img_path)
+nani_encoding = face_recognition.face_encodings(nani_image)[0]
+
+known_face_encodings = [abdul_kalam_encoding, ganesh_encoding, bhargav_encoding, nani_encoding]
+known_face_names = ["Abdul_Kalam", "Ganesh", "Bhargav", "Nani"]
+
+face_positions = []
+face_encodings_list = []
+detected_face_names = []
+process_frame = True
+
+while True:
+    print("Waiting for bell input to activate face recognition...")
+    
+    serial_data = serial_connection.read(9)
+    if serial_data == b'activated':
+        print("Bell activated, starting face recognition...")
+        while True:
+            ret, frame = video_capture_device.read()
+            resized_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            rgb_resized_frame = resized_frame[:, :, ::-1]
+
+            if process_frame:
+                face_positions = face_recognition.face_locations(rgb_resized_frame)
+                face_encodings_list = face_recognition.face_encodings(rgb_resized_frame, face_positions)
+
+                detected_face_names = []
+                for face_encoding in face_encodings_list:
+                    matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
+                    name = "Unknown"
+                    face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                    best_match_index = np.argmin(face_distances)
+                    if matches[best_match_index]:
+                        name = known_face_names[best_match_index]
+
+                    detected_face_names.append(name)
+                    if name == "Unknown":
+                        serial_connection.write(b'Unknown')
+                        serial_data = serial_connection.read(7)
+                        if serial_data == b'present':
+                            print("People present inside home, no need to send image.")
+                        elif serial_data == b'quite':
+                            print("Sending image via email as no one recognized...")
+                            return_value, captured_image = video_capture_device.read()
+                            cv2.imwrite('opencv.png', captured_image)
+
+                            sender_email = "your_email@gmail.com"
+                            receiver_email = "receiver_email@example.com"
+                            email_password = "your_password"
+                            message = EmailMessage()
+                            message['Subject'] = "Alert: Theft detected inside your home"
+                            message['From'] = sender_email
+                            message['To'] = receiver_email
+                            message.set_content('Please check the attached image.')
+
+                            with open('opencv.png', 'rb') as f:
+                                image_data = f.read()
+                                image_type = imghdr.what(f.name)
+                                image_name = f.name
+                            message.add_attachment(image_data, maintype='image', subtype=image_type, filename=image_name)
+                            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                                smtp.login(sender_email, email_password)
+                                smtp.send_message(message)
+                    elif name in ["Abdul_Kalam", "Ganesh", "Bhargav", "Nani"]:
+                        serial_connection.write(b'recognized valid')
+
+            process_frame = not process_frame
+
+            for (top, right, bottom, left), name in zip(face_positions, detected_face_names):
+                top *= 4
+                right *= 4
+                bottom *= 4
+                left *= 4
+                color = (0, 255, 0)
+                if name == "Unknown":
+                    color = (0, 0, 255)
+                cv2.rectangle(frame, (left, top), (right, bottom), color, 3)
+                cv2.rectangle(frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                cv2.putText(frame, name, (left + 6, bottom - 6), font, 0.8, (255, 255, 255), 2)
+
+            cv2.imshow('Video Stream', frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("Exiting program as 'q' was pressed.")
+                break
+
+video_capture_device.release()
+cv2.destroyAllWindows()
