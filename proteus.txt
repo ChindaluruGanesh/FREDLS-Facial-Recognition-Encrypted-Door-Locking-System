@@ -1,0 +1,118 @@
+pio.uart = Ports.UART()
+
+GPIO.setmode(GPIO.BOARD)
+GPIO.setwarnings(False)
+
+LCD_RS = 7
+LCD_E = 11
+LCD_D4 = 12
+LCD_D5 = 13
+LCD_D6 = 15
+LCD_D7 = 16
+pir_sensor_pin = 29
+alarm_pin = 31
+button_pin = 32
+motor1_pin = 33
+motor2_pin = 36
+
+LCD_WIDTH = 16
+LCD_CHR = True
+LCD_CMD = False
+LCD_LINE_1 = 0x80
+LCD_LINE_2 = 0xC0
+E_PULSE = 0.0005
+E_DELAY = 0.0005
+
+def lcd_initialize():
+    lcd_byte(0x33, LCD_CMD)
+    lcd_byte(0x32, LCD_CMD)
+    lcd_byte(0x06, LCD_CMD)
+    lcd_byte(0x0C, LCD_CMD)
+    lcd_byte(0x28, LCD_CMD)
+    lcd_byte(0x01, LCD_CMD)
+    time.sleep(E_DELAY)
+
+def lcd_send_byte(bits, mode):
+    GPIO.output(LCD_RS, mode)
+    GPIO.output(LCD_D4, bits & 0x10)
+    GPIO.output(LCD_D5, bits & 0x20)
+    GPIO.output(LCD_D6, bits & 0x40)
+    GPIO.output(LCD_D7, bits & 0x80)
+    lcd_toggle_enable()
+    GPIO.output(LCD_D4, bits & 0x01)
+    GPIO.output(LCD_D5, bits & 0x02)
+    GPIO.output(LCD_D6, bits & 0x04)
+    GPIO.output(LCD_D7, bits & 0x08)
+    lcd_toggle_enable()
+
+def lcd_toggle_enable():
+    time.sleep(E_DELAY)
+    GPIO.output(LCD_E, True)
+    time.sleep(E_PULSE)
+    GPIO.output(LCD_E, False)
+    time.sleep(E_DELAY)
+
+def lcd_display_message(message, line):
+    message = message.ljust(LCD_WIDTH, " ")
+    lcd_send_byte(line, LCD_CMD)
+    for char in message:
+        lcd_send_byte(ord(char), LCD_CHR)
+
+GPIO.setup(LCD_E, GPIO.OUT)
+GPIO.setup(LCD_RS, GPIO.OUT)
+GPIO.setup(LCD_D4, GPIO.OUT)
+GPIO.setup(LCD_D5, GPIO.OUT)
+GPIO.setup(LCD_D6, GPIO.OUT)
+GPIO.setup(LCD_D7, GPIO.OUT)
+GPIO.setup(pir_sensor_pin, GPIO.IN)
+GPIO.setup(button_pin, GPIO.IN)
+GPIO.setup(alarm_pin, GPIO.OUT)
+GPIO.setup(motor1_pin, GPIO.OUT)
+GPIO.setup(motor2_pin, GPIO.OUT)
+
+lcd_initialize()
+lcd_display_message("Welcome", LCD_LINE_1)
+time.sleep(1)
+lcd_send_byte(0x01, LCD_CMD)
+lcd_display_message("FREDLS", LCD_LINE_1)
+time.sleep(1)
+
+while True:
+    lcd_send_byte(0x01, LCD_CMD)
+    lcd_display_message("Press Bell", LCD_LINE_1)
+    time.sleep(0.2)
+    button_data = GPIO.input(button_pin)
+    time.sleep(0.2)
+    if not button_data:
+        pio.uart.print("activated")
+        GPIO.output(alarm_pin, True)
+        time.sleep(1)
+        GPIO.output(alarm_pin, False)
+        while True:
+            received_data = pio.uart.recv()
+            if received_data == "recognized valid":
+                lcd_send_byte(0x01, LCD_CMD)
+                lcd_display_message("Valid Person", LCD_LINE_1)
+                lcd_display_message("Door Open", LCD_LINE_2)
+                GPIO.output(motor1_pin, False)
+                GPIO.output(motor2_pin, True)
+                time.sleep(1)
+                GPIO.output(motor1_pin, True)
+                GPIO.output(motor2_pin, False)
+                time.sleep(1)
+                GPIO.output(motor1_pin, False)
+                GPIO.output(motor2_pin, False)
+                break
+            elif received_data == "unknown":
+                lcd_send_byte(0x01, LCD_CMD)
+                lcd_display_message("Unknown Person", LCD_LINE_1)
+                lcd_display_message("Door Closed", LCD_LINE_2)
+                time.sleep(0.2)
+                pir_data = GPIO.input(pir_sensor_pin)
+                time.sleep(0.2)
+                if pir_data:
+                    pio.uart.print("present")
+                else:
+                    pio.uart.print("quiet")
+                time.sleep(1)
+                break
